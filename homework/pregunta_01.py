@@ -6,101 +6,154 @@ import pandas as pd
 import os
 
 
+import os
+import unicodedata
+import pandas as pd
+
+
 def pregunta_01():
-    """Limpieza del archivo de solicitudes.
-
-    Pasos aplicados:
-    - Leer `files/input/solicitudes_de_credito.csv` usando `;` como separador.
-    - Eliminar duplicados exactos.
-    - Normalizar texto: eliminar espacios exteriores y pasar a minúsculas
-      en las columnas de tipo texto.
-    - Estandarizar valores de `sexo` y `línea_credito` (minúsculas).
-    - Normalizar `estrato` y `comuna_ciudadano` a enteros cuando sea posible.
-    - Normalizar la fecha `fecha_de_beneficio` al formato DD/MM/YYYY.
-    - Limpiar `monto_del_credito` dejando solo dígitos y convirtiendo a int
-      cuando sea posible.
-    - Guardar el resultado en `files/output/solicitudes_de_credito.csv` con
-      separador `;`.
-
-    Estas transformaciones son no destructivas en la medida de lo posible y
-    están diseñadas para producir un CSV homogéneo para posteriores análisis
-    y para que las pruebas automáticas detecten los conteos esperados.
-    """
-
-    input_path = os.path.join("files", "input", "solicitudes_de_credito.csv")
-    output_dir = os.path.join("files", "output")
+    # Rutas de entrada y salida
+    input_path = "files/input/solicitudes_de_credito.csv"
+    output_dir = "files/output"
     output_path = os.path.join(output_dir, "solicitudes_de_credito.csv")
 
-    # Leer
-    df = pd.read_csv(input_path, sep=';', dtype=str)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
 
-    # Eliminar columna índice si existe como columna vacía (nombre vacio o 'Unnamed')
-    # y resetear índice
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+    # ------------------------------------------------------------------
+    # 1. Lectura del archivo original
+    # ------------------------------------------------------------------
+    df = pd.read_csv(input_path, sep=";")
 
-    # Eliminar duplicados exactos
-    df = df.drop_duplicates()
+    # Eliminar columna índice innecesaria si existe (tipo 'Unnamed: 0')
+    cols_lower = {c.lower(): c for c in df.columns}
+    if "unnamed: 0" in cols_lower:
+        df = df.drop(columns=[cols_lower["unnamed: 0"]])
 
-    # Normalizar espacios y pasar a minúsculas en columnas de texto
-    for col in df.columns:
-        # trabajamos solo en columnas string-representadas
-        df[col] = df[col].astype(str).str.strip()
-        # mantener NaN como 'nan' strings convertidas anteriormente; reemplazamos
-        df[col] = df[col].replace('nan', pd.NA)
+    # ------------------------------------------------------------------
+    # 2. Limpieza de monto_del_credito (antes de convertir a numérico)
+    # ------------------------------------------------------------------
+    if "monto_del_credito" in df.columns:
+        monto = df["monto_del_credito"].astype(str).str.strip()
 
-    # Columnas que deben ser texto en minúsculas
-    text_cols = ['sexo', 'tipo_de_emprendimiento', 'idea_negocio', 'barrio', 'línea_credito']
+        # Quitar símbolo de moneda y espacios
+        monto = monto.str.replace("$", "", regex=False)
+        monto = monto.str.replace(" ", "", regex=False)
+
+        # Quitar separadores de miles
+        monto = monto.str.replace(",", "", regex=False)
+
+        # Quitar parte decimal ".00" en los casos que vienen así
+        monto = monto.str.replace(".00", "", regex=False)
+
+        # Convertir a numérico
+        df["monto_del_credito"] = pd.to_numeric(monto, errors="coerce")
+
+    # ------------------------------------------------------------------
+    # 3. Normalización de texto en columnas categóricas
+    # ------------------------------------------------------------------
+    text_cols = [
+        "sexo",
+        "tipo_de_emprendimiento",
+        "idea_negocio",
+        "barrio",
+        "línea_credito",
+    ]
+
     for col in text_cols:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.strip().str.lower().replace('nan', pd.NA)
+            s = df[col].astype(str).str.strip().str.lower()
 
-    # Estandarizar 'sexo'
-    if 'sexo' in df.columns:
-        df['sexo'] = df['sexo'].str.lower().str.strip()
-        df['sexo'] = df['sexo'].replace({
-            'masculino': 'masculino',
-            'm': 'masculino',
-            'femenino': 'femenino',
-            'f': 'femenino'
-        })
+            # Quitar acentos / tildes
+            s = s.apply(
+                lambda x: "".join(
+                    c
+                    for c in unicodedata.normalize("NFKD", x)
+                    if not unicodedata.combining(c)
+                )
+            )
 
-    # Normalizar 'línea_credito' a minúsculas y quitar espacios extras
-    if 'línea_credito' in df.columns:
-        df['línea_credito'] = df['línea_credito'].astype(str).str.strip().str.lower().replace('nan', pd.NA)
+            # Reemplazar ., _, - por espacio
+            s = s.str.replace(r"[._\-]+", " ", regex=True)
 
-    # Normalizar 'estrato' -> quitar ceros a la izquierda y convertir a entero cuando posible
-    if 'estrato' in df.columns:
-        df['estrato'] = df['estrato'].astype(str).str.strip().str.replace('^0+', '', regex=True)
-        df['estrato'] = df['estrato'].replace({'': pd.NA})
-        # intentar convertir a entero seguro
-        df['estrato'] = pd.to_numeric(df['estrato'], errors='coerce').astype('Int64')
+            # Colapsar espacios múltiples
+            s = s.str.replace(r"\s+", " ", regex=True).str.strip()
 
-    # Normalizar 'comuna_ciudadano' a int (vienen como '10.0' etc)
-    if 'comuna_ciudadano' in df.columns:
-        df['comuna_ciudadano'] = pd.to_numeric(df['comuna_ciudadano'], errors='coerce').astype('Int64')
+            df[col] = s
 
-    # Normalizar fecha a formato DD/MM/YYYY (si es posible)
-    if 'fecha_de_beneficio' in df.columns:
-        # intentar parsear con dayfirst True y varias posibles formatos
-        df['fecha_de_beneficio_parsed'] = pd.to_datetime(df['fecha_de_beneficio'], dayfirst=True, errors='coerce', infer_datetime_format=True)
-        # donde no se pudo parsear, dejar el original; donde sí, formatear
-        df['fecha_de_beneficio'] = df['fecha_de_beneficio_parsed'].dt.strftime('%d/%m/%Y')
-        df['fecha_de_beneficio'] = df['fecha_de_beneficio'].fillna(df['fecha_de_beneficio'].astype(str))
-        df = df.drop(columns=['fecha_de_beneficio_parsed'])
+    # Quitar prefijo "barrio " en nombres de barrios
+    if "barrio" in df.columns:
+        df["barrio"] = (
+            df["barrio"]
+            .str.replace(r"^barrio\s+", "", regex=True)
+            .str.replace(r"\s+", " ", regex=True)
+            .str.strip()
+        )
 
-    # Limpiar monto_del_credito -> dejar solo dígitos
-    if 'monto_del_credito' in df.columns:
-        df['monto_del_credito'] = df['monto_del_credito'].astype(str)
-        df['monto_del_credito'] = df['monto_del_credito'].str.replace('[^0-9]', '', regex=True)
-        # Si queda vacío, setear NA
-        df['monto_del_credito'] = df['monto_del_credito'].replace({'': pd.NA})
-        # convertir a entero cuando sea posible
-        df['monto_del_credito'] = pd.to_numeric(df['monto_del_credito'], errors='coerce').astype('Int64')
+    # Homogeneizar sexo (m / f -> masculino / femenino)
+    if "sexo" in df.columns:
+        df["sexo"] = df["sexo"].replace(
+            {
+                "m": "masculino",
+                "f": "femenino",
+            }
+        )
 
-    # Finalmente, reordenar columnas manteniendo las existentes y escribir output
-    os.makedirs(output_dir, exist_ok=True)
-    # Guardar con separador ; y sin índice
-    df.to_csv(output_path, sep=';', index=False)
+    # Algunas normalizaciones específicas para línea de crédito
+    if "línea_credito" in df.columns:
+        df["línea_credito"] = df["línea_credito"].replace(
+            {
+                "micro credito": "microcredito",
+                "micro creditos": "microcredito",
+                "micro empresar ial": "microempresarial",
+                "micro empresaria l": "microempresarial",
+                "microempresa rial": "microempresarial",
+            }
+        ).str.replace(r"\s+", " ", regex=True).str.strip()
 
+    # ------------------------------------------------------------------
+    # 4. Conversión de tipos (fechas y numéricos)
+    # ------------------------------------------------------------------
+    # Fecha
+    if "fecha_de_beneficio" in df.columns:
+        df["fecha_de_beneficio"] = pd.to_datetime(
+            df["fecha_de_beneficio"], dayfirst=True, errors="coerce"
+        )
+
+    # Numéricos
+    for num_col in ["estrato", "comuna_ciudadano"]:
+        if num_col in df.columns:
+            df[num_col] = pd.to_numeric(df[num_col], errors="coerce")
+
+    # ------------------------------------------------------------------
+    # 5. Eliminación de registros con datos faltantes en columnas clave
+    # ------------------------------------------------------------------
+    subset_na = []
+    for col in ["tipo_de_emprendimiento", "barrio", "monto_del_credito", "fecha_de_beneficio"]:
+        if col in df.columns:
+            subset_na.append(col)
+
+    if subset_na:
+        df = df.dropna(subset=subset_na)
+
+    # ------------------------------------------------------------------
+    # 6. Eliminación de duplicados después de toda la estandarización
+    # ------------------------------------------------------------------
+    df = df.drop_duplicates()
+
+    # ------------------------------------------------------------------
+    # 7. Formateo final y escritura del archivo limpio
+    # ------------------------------------------------------------------
+    if "fecha_de_beneficio" in df.columns:
+        df["fecha_de_beneficio"] = df["fecha_de_beneficio"].dt.strftime("%Y-%m-%d")
+
+    # Ordenar filas para dejar salida estable (no afecta los asserts)
+    sort_cols = [c for c in ["fecha_de_beneficio", "barrio", "idea_negocio"] if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(by=sort_cols, kind="stable")
+
+    # Guardar CSV limpio con separador ';'
+    df.to_csv(output_path, index=False, sep=";")
+
+    # La función puede devolver el DataFrame por comodidad (no es obligatorio para los tests)
     return df
-    
