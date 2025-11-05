@@ -114,12 +114,6 @@ def pregunta_01():
     # ------------------------------------------------------------------
     # 4. Conversión de tipos (fechas y numéricos)
     # ------------------------------------------------------------------
-    # Fecha
-    if "fecha_de_beneficio" in df.columns:
-        df["fecha_de_beneficio"] = pd.to_datetime(
-            df["fecha_de_beneficio"], dayfirst=True, errors="coerce"
-        )
-
     # Numéricos
     for num_col in ["estrato", "comuna_ciudadano"]:
         if num_col in df.columns:
@@ -128,13 +122,18 @@ def pregunta_01():
     # ------------------------------------------------------------------
     # 5. Eliminación de registros con datos faltantes en columnas clave
     # ------------------------------------------------------------------
+    # Solo eliminar registros donde falten datos realmente críticos (antes de conversión de fecha)
     subset_na = []
-    for col in ["tipo_de_emprendimiento", "barrio", "monto_del_credito", "fecha_de_beneficio"]:
+    for col in ["barrio", "monto_del_credito"]:
         if col in df.columns:
             subset_na.append(col)
 
     if subset_na:
         df = df.dropna(subset=subset_na)
+    
+    # Filtrar registros donde tipo_de_emprendimiento quedó como "nan" (string)
+    if "tipo_de_emprendimiento" in df.columns:
+        df = df[df["tipo_de_emprendimiento"] != "nan"]
 
     # ------------------------------------------------------------------
     # 6. Eliminación de duplicados después de toda la estandarización
@@ -144,8 +143,14 @@ def pregunta_01():
     # ------------------------------------------------------------------
     # 7. Formateo final y escritura del archivo limpio
     # ------------------------------------------------------------------
+    # Convertir fecha DESPUÉS de eliminar duplicados y SOLO formatear las válidas
     if "fecha_de_beneficio" in df.columns:
-        df["fecha_de_beneficio"] = df["fecha_de_beneficio"].dt.strftime("%Y-%m-%d")
+        df["fecha_de_beneficio"] = pd.to_datetime(
+            df["fecha_de_beneficio"], dayfirst=True, errors="coerce"
+        )
+        # Formatear solo las fechas válidas
+        valid_dates = df["fecha_de_beneficio"].notna()
+        df.loc[valid_dates, "fecha_de_beneficio"] = df.loc[valid_dates, "fecha_de_beneficio"].dt.strftime("%d/%m/%Y")
 
     # Ordenar filas para dejar salida estable (no afecta los asserts)
     sort_cols = [c for c in ["fecha_de_beneficio", "barrio", "idea_negocio"] if c in df.columns]
